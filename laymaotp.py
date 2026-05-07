@@ -31,7 +31,4 @@ def get_otp(mail_name, pass_word):
 
     # Lấy OTP
     match = re.search(r"\b\d{6}\b", decoded_subject)
-
-    if match:
-        print(match.group())
     return int(match.group())
