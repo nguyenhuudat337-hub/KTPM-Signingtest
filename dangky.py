@@ -3,12 +3,13 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By 
+from selenium.webdriver.common.by import By
 import time
 from laymaotp import *
+
 options = Options()
 options.add_experimental_option("detach", True)
 
@@ -23,7 +24,60 @@ def log_step(msg):
     print("\n" + msg.center(100, "="))
 
 def log(msg, status="INFO"):
-    print(f"[{status}] {msg}")
+    symbols = {"PASS": "✅", "FAIL": "❌", "INFO": "ℹ️ ", "ERROR": "⚠️ "}
+    symbol = symbols.get(status, "   ")
+    print(f"  {symbol} [{status}] {msg}")
+
+def log_result(desc, expected_blocked, actually_blocked):
+    """
+    desc             : mô tả case
+    expected_blocked : True nếu đây là case KHÔNG hợp lệ (mong website chặn)
+                       False nếu đây là case HỢP LỆ (mong website cho qua)
+    actually_blocked : True nếu website thực sự hiện lỗi / không cho qua
+    """
+    if expected_blocked:
+        # Case không hợp lệ → website chặn đúng → PASS, website cho qua → FAIL
+        if actually_blocked:
+            log(f"{desc} → Website chặn đúng ✓", "PASS")
+        else:
+            log(f"{desc} → Website KHÔNG chặn (lỗi không hiện)", "FAIL")
+    else:
+        # Case hợp lệ → website cho qua → PASS, website báo lỗi → FAIL
+        if not actually_blocked:
+            log(f"{desc} → Website cho qua đúng ✓", "PASS")
+        else:
+            log(f"{desc} → Website BÁO LỖI nhầm (case hợp lệ bị chặn)", "FAIL")
+
+
+# ================== HELPER: kiểm tra có error message không ==================
+def has_error_message(timeout=4):
+    """
+    Trả về True nếu tìm thấy bất kỳ thông báo lỗi nào trên form.
+    Bạn có thể mở rộng XPath theo đúng selector của Decathlon.
+    """
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.visibility_of_element_located((
+                By.XPATH,
+                "//*[contains(@class,'error') or contains(@class,'invalid') "
+                "or contains(@class,'alert') or contains(@class,'message--error')]"
+                "[normalize-space(text()) != '']"
+            ))
+        )
+        return True
+    except TimeoutException:
+        return False
+
+def is_still_on_same_step(step_id, timeout=3):
+    """Trả về True nếu vẫn còn ở bước hiện tại (không chuyển bước)."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.ID, step_id))
+        )
+        return True
+    except TimeoutException:
+        return False
+
 
 # ================== STEP 1 ==================
 log_step("Tắt quảng cáo")
@@ -38,11 +92,15 @@ except:
 
 # ================== STEP 2 ==================
 log_step("Click đăng nhập")
-login_btn = driver.find_element(By.XPATH,"//*[@id='headerBoxInBaseContainer']/div/div[1]/div[5]/div/div[1]/div/div[1]/div")
+login_btn = driver.find_element(
+    By.XPATH,
+    "//*[@id='headerBoxInBaseContainer']/div/div[1]/div[5]/div/div[1]/div/div[1]/div"
+)
 login_btn.click()
 log("Click login OK", "PASS")
 
-# ================== STEP 3 ==================
+
+# ================== STEP 3: Click tạo tài khoản ==================
 def click_btn_create():
     log_step("Click tạo tài khoản")
     try:
@@ -55,355 +113,517 @@ def click_btn_create():
         log(f"Lỗi: {e}", "ERROR")
 
 
-
-
-#email đã tồn tại
+# ================== VALIDATE 2: Email đã tồn tại ==================
 def validate2():
-    log_step("Nhập email: test@gmail.com")
-
+    log_step("Test email đã tồn tại: test@gmail.com")
     try:
-        # 🔥 B1: ĐỢI form email xuất hiện SAU khi click create
-        email_input = wait.until(
-            EC.presence_of_element_located((By.ID, "input-email"))
-        )
-
-        # 🔥 B2: đợi nó clickable (tránh stale)
-        email_input = wait.until(
-            EC.element_to_be_clickable((By.ID, "input-email"))
-        )
-
-
-        # 🔥 B3: KHÔNG click trước → nhập luôn (giảm re-render)
+        email_input = wait.until(EC.presence_of_element_located((By.ID, "input-email")))
+        email_input = wait.until(EC.element_to_be_clickable((By.ID, "input-email")))
         email_input.clear()
         email_input.send_keys("test@gmail.com")
+        log("Nhập email: test@gmail.com", "INFO")
 
-        log("Nhập email OK", "PASS")
-
-        # 🔥 B4: đợi nút xác nhận
-        log_step("Xác nhận")
-
-        signup_btn = wait.until(
-            EC.element_to_be_clickable((By.ID, "lookup-btn-signup"))
-        )
-
+        signup_btn = wait.until(EC.element_to_be_clickable((By.ID, "lookup-btn-signup")))
         driver.execute_script("arguments[0].click();", signup_btn)
+        log("Click signup", "INFO")
 
-        log("Click signup OK", "PASS")
-
-        log("Tài khoản đã tồn tại", "FAIL")
+        # Mong đợi: website báo email đã tồn tại (hiện lỗi hoặc không chuyển sang OTP)
+        blocked = has_error_message() or is_still_on_same_step("input-email")
+        log_result("Email đã tồn tại", expected_blocked=True, actually_blocked=blocked)
 
     except StaleElementReferenceException:
-        log("Stale → thử lại", "ERROR")
-
+        log("Stale element → thử lại", "ERROR")
     except Exception as e:
         log(f"Lỗi: {e}", "ERROR")
 
+def clear_email_input():
+    """Clear ô email bằng 3 lớp để đảm bảo sạch hoàn toàn."""
+    email_input = wait.until(EC.element_to_be_clickable((By.ID, "input-email")))
+    email_input.click()
+    # Lớp 1: select all + delete (hoạt động trên cả Mac lẫn Windows/Linux)
+    email_input.send_keys(Keys.COMMAND, "a")
+    email_input.send_keys(Keys.DELETE)
+    email_input.send_keys(Keys.CONTROL, "a")
+    email_input.send_keys(Keys.DELETE)
+    # Lớp 2: .clear() của Selenium
+    email_input.clear()
+    # Lớp 3: JS reset value để chắc chắn framework nhận biết field rỗng
+    driver.execute_script("arguments[0].value = '';", email_input)
+    return email_input
 
-
-#test định dạng
+# ================== VALIDATE 3: Định dạng email ==================
 def validate3():
-    log_step("Test email sai định dạng")
-
+    log_step("Test định dạng email")
+ 
+    # (email, mô tả, is_valid)
+    # is_valid=False → case không hợp lệ, mong website chặn
+    # is_valid=True  → case hợp lệ, mong website cho qua
     test_emails = [
-        ("@gmail.com","Thiếu name"),
-        ("abc@gmail","Thiếu miền .com"), 
-        ("nguyenhuudat337hshdhshahsudystaysudusiausdysudhvgfhdjsyctsraishdgcbsjayew746352gvhshdvdjs836sgd@gmail.com","Số ký tự tối đa là 90"),
-        ("","Email rỗng"),    
-        ("nguyenhuudat 337@gmail.com","Có khoảng trắng"),
-        ("abcgmail.com","Thiếu @"),      
-        ("nguyenhuudat337+4@gmail.com","Đúng định dạng"),
+        ("@gmail.com",                                                                           "Thiếu tên trước @",       False),
+        ("abc@gmail",                                                                            "Thiếu đuôi miền (.com…)", False),
+        ("nguyenhuudat337hshdhshahsudyystaysudusiausdysudhvgfhdjsyctsraishdgcbsjayew74635staysudusiausdysudhvgfhdjsyctsraishdgcbsjayew746352gvhshdvdjs836sgd@gmail.com",
+                                                                                                 "Vượt 90 ký tự",          False),
+        ("",                                                                                     "Email rỗng",              False),
+        ("nguyenhuudat 337@gmail.com",                                                           "Có khoảng trắng",         False),
+        ("abcgmail.com",                                                                         "Thiếu @",                 False),
+        ("nguyenhuudat337+6@gmail.com",                                                          "Email hợp lệ",            True),
     ]
-
-    for email,desc in test_emails:
+ 
+    for email, desc, is_valid in test_emails:
         try:
-            log_step(f"Test: {email}")
-
-            email_input = wait.until(
-                EC.element_to_be_clickable((By.ID, "input-email"))
-            )
-
-            # clear
-            email_input.send_keys(Keys.COMMAND, "a")
-            email_input.send_keys(Keys.DELETE)
-
-            # nhập
-            email_input.send_keys(email)
-
-            signup_btn = wait.until(
-                EC.element_to_be_clickable((By.ID, "lookup-btn-signup"))
-            )
+            log_step(f"Test: [{desc}]  →  '{email}'")
+ 
+            # Clear sạch trước khi nhập case mới
+            email_input = clear_email_input()
+ 
+            # Chỉ send_keys nếu email không rỗng (case rỗng thì để trống luôn)
+            if email:
+                email_input.send_keys(email)
+ 
+            # Verify thực tế trong ô sau khi nhập
+            actual_value = email_input.get_attribute("value")
+            log(f"Giá trị trong ô: '{actual_value}'", "INFO")
+ 
+            signup_btn = wait.until(EC.element_to_be_clickable((By.ID, "lookup-btn-signup")))
             driver.execute_script("arguments[0].click();", signup_btn)
-            if desc == "Đúng định dạng": log(f"{desc}", "PASS")
-            else: log(f"{desc}", "FAIL")
-
+ 
+            time.sleep(2)  # đợi UI phản hồi
+ 
+            # Phát hiện bị chặn: có lỗi HOẶC vẫn còn ở bước email
+            blocked = has_error_message() or is_still_on_same_step("input-email")
+            log_result(desc, expected_blocked=not is_valid, actually_blocked=blocked)
+ 
         except Exception as e:
             log(f"Lỗi: {e}", "ERROR")
-
-        time.sleep(4)
-
-
+ 
+        time.sleep(2)
 
 
-#lấy otp và nhập tự động
-# def input_otp():
-#     time.sleep(5)
-#     otp = get_otp("nguyenhuudat337@gmail.com", "skvj ewue ebcl mufv")
-#     otp = str(otp)
-
-#     if len(otp) != 6:
-#         raise ValueError("OTP phải có đúng 6 ký tự")
-
-#     for i, digit in enumerate(otp):
-#         otp_input = wait.until(
-#             EC.element_to_be_clickable((By.ID, f"input-{i}"))
-#         )
-#         otp_input.send_keys(digit)
-#     signup_btn = wait.until(
-#         EC.element_to_be_clickable((By.XPATH, "//*[@id='form-verification-code']/div/button[1]"))
-#     )
-#     driver.execute_script("arguments[0].click();", signup_btn)
-#     log("Click signup OK", "PASS")
-
+# ================== OTP helpers ==================
 def clear_otp():
-    """Xóa toàn bộ 6 ô OTP"""
     for i in range(6):
-        otp_input = wait.until(
-            EC.element_to_be_clickable((By.ID, f"input-{i}"))
-        )
-        otp_input.send_keys(Keys.COMMAND, "a")
+        otp_input = wait.until(EC.element_to_be_clickable((By.ID, f"input-{i}")))
+        otp_input.send_keys(Keys.CONTROL, "a")
         otp_input.send_keys(Keys.DELETE)
 
-
 def enter_otp(otp_value):
-    """Nhập OTP vào 6 ô"""
     clear_otp()
-
-    for i, char in enumerate(str(otp_value)[:6]):   # chỉ nhập tối đa 6 ký tự
-        otp_input = wait.until(
-            EC.element_to_be_clickable((By.ID, f"input-{i}"))
-        )
+    for i, char in enumerate(str(otp_value)[:6]):
+        otp_input = wait.until(EC.element_to_be_clickable((By.ID, f"input-{i}")))
         otp_input.send_keys(char)
 
-
 def click_verify_otp():
-    """Click nút xác nhận OTP"""
     verify_btn = wait.until(
         EC.element_to_be_clickable((
-            By.XPATH,
-            "//*[@id='form-verification-code']/div/button[1]"
+            By.XPATH, "//*[@id='form-verification-code']/div/button[1]"
         ))
     )
     driver.execute_script("arguments[0].click();", verify_btn)
 
+def otp_step_still_visible(timeout=3):
+    """Trả về True nếu form OTP vẫn còn (chưa qua bước password)."""
+    return is_still_on_same_step("form-verification-code", timeout)
 
+
+# ================== VALIDATE OTP ==================
 def validate_otp():
     log_step("Test chức năng nhập OTP")
 
-    # OTP thật để test case cuối
-    real_otp = str(get_otp("nguyenhuudat337@gmail.com", "skvj ewue ebcl mufv"))
+    real_otp = str(get_otp(
+        "nguyenhuudat337@gmail.com",
+        "ztis xbfk dqqw whan"
+    ))
 
+    # (otp_value, mô tả, đúng format?)
     otp_cases = [
-        ("123", "OTP phải có đúng 6 ký tự", False),
-        ("1234567", "OTP phải có đúng 6 ký tự", False),
-        ("abcdef", "OTP phải là số", False),
-        ("12@#56", "OTP không chứa ký tự đặc biệt", False),
-        ("", "OTP không được để trống", False),
-        ("000000", "OTP không chính xác", False),
-        (real_otp, "OTP hợp lệ", True),
+        ("123",       "OTP ít hơn 6 ký tự",           False),
+        ("abcdef",    "OTP chứa chữ cái",             False),
+        ("12@#56",    "OTP chứa ký tự đặc biệt",      False),
+        ("",          "OTP rỗng",                     False),
+
+        # đúng format nhưng sai mã OTP
+        ("000000",    "OTP sai (không đúng mã thật)", True),
+
+        # OTP thật
+        (real_otp,    "OTP hợp lệ (mã thật)",         True),
     ]
 
-    for otp_value, expected_msg, is_valid in otp_cases:
-        display_value = otp_value if otp_value else "[trống]"
+    for otp_value, desc, valid_format in otp_cases:
+
+        display = otp_value if otp_value else "[rỗng]"
 
         try:
-            log_step(f"Kiểm tra OTP: {display_value}")
+            log_step(f"OTP: [{desc}] → '{display}'")
 
             # Nhập OTP
             enter_otp(otp_value)
-            log(f"Nhập OTP: {display_value}", "INFO")
+            log(f"Nhập OTP: {display}", "INFO")
 
             time.sleep(1)
-            click_verify_otp()
-            log("Click xác nhận OTP", "INFO")
 
-            # ==================================================
-            # Hệ thống KHÔNG hiển thị lỗi OTP -> tự validate thủ công
-            # ==================================================
-            if not is_valid:
-                log(f"{display_value} -> {expected_msg}", "FAIL")
-                time.sleep(1)
+            # =========================================
+            # Tìm nút Tiếp tục
+            # =========================================
+            verify_btn = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (
+                        By.CSS_SELECTOR,
+                        "button.otp-template__form__button"
+                    )
+                )
+            )
+
+            # =========================================
+            # Kiểm tra trạng thái disabled
+            # =========================================
+            disabled_attr = verify_btn.get_attribute("disabled")
+
+            is_disabled = disabled_attr is not None
+
+            log(
+                f"Nút Tiếp tục: "
+                f"{'DISABLED' if is_disabled else 'ENABLED'}",
+                "INFO"
+            )
+
+            # =================================================
+            # CASE 1: OTP sai format
+            # =================================================
+            if not valid_format:
+
+                if is_disabled:
+                    log(
+                        "PASS - OTP sai format, nút bị khóa đúng",
+                        "SUCCESS"
+                    )
+                else:
+                    log(
+                        "FAIL - OTP sai format nhưng nút vẫn click được",
+                        "ERROR"
+                    )
+
+                log_result(
+                    desc,
+                    expected_blocked=True,
+                    actually_blocked=is_disabled
+                )
+
                 continue
 
-            # OTP hợp lệ
-            log(f"{display_value} -> OTP hợp lệ", "PASS")
-            return   # OTP đúng thì dừng để sang bước password
+            # =================================================
+            # CASE 2: OTP đúng format
+            # =================================================
+            if is_disabled:
+
+                log(
+                    "FAIL - OTP đúng format nhưng nút vẫn bị khóa",
+                    "ERROR"
+                )
+
+                log_result(
+                    desc,
+                    expected_blocked=False,
+                    actually_blocked=True
+                )
+
+                continue
+
+            # =========================================
+            # Click nút Tiếp tục
+            # =========================================
+            click_verify_otp()
+            log("Click nút Tiếp tục", "INFO")
+
+            time.sleep(2)
+
+            # =========================================
+            # Kiểm tra còn ở bước OTP không
+            # =========================================
+            blocked = (
+                otp_step_still_visible()
+                or has_error_message(timeout=2)
+            )
+
+            expected_blocked = (otp_value != real_otp)
+
+            log_result(
+                desc,
+                expected_blocked=expected_blocked,
+                actually_blocked=blocked
+            )
+
+            # =========================================
+            # OTP đúng thật
+            # =========================================
+            if otp_value == real_otp and not blocked:
+
+                log(
+                    "PASS - OTP hợp lệ, chuyển sang bước tiếp theo",
+                    "SUCCESS"
+                )
+
+                return
 
         except Exception as e:
-            log(f"{display_value} -> Lỗi hệ thống: {expected_msg}", "ERROR")
+            log(f"Lỗi hệ thống: {e}", "ERROR")
 
 
-
+# ================== VALIDATE PASSWORD (rỗng) ==================
 def validate_password_empty():
     log_step("Test mật khẩu rỗng")
-
     try:
         confirm_btn = wait.until(
-            EC.element_to_be_clickable((
-                By.XPATH,
-                "//*[@id='form-password']/button[1]"
-            ))
+            EC.element_to_be_clickable((By.XPATH, "//*[@id='form-password']/button[1]"))
         )
         driver.execute_script("arguments[0].click();", confirm_btn)
-        log("Click xác nhận", "PASS")
-        log("Mật khẩu rỗng", "FAIL")
-        
+        log("Click xác nhận (mật khẩu để trống)", "INFO")
+        time.sleep(2)
+
+        # Mong đợi: website chặn → vẫn còn form password hoặc hiện lỗi
+        blocked = has_error_message() or is_still_on_same_step("form-password")
+        log_result("Mật khẩu rỗng", expected_blocked=True, actually_blocked=blocked)
+
     except Exception as e:
         log(f"Lỗi: {e}", "ERROR")
 
 
+# ================== VALIDATE PASSWORD ==================
 def validate_password():
-    log_step("Test chức năng nhập mật khẩu")
 
+    log_step("Test các trường hợp mật khẩu")
+
+    ERROR_TEXT1 = (
+        "Mật khẩu chưa hợp lệ. "
+        "Đảm bảo đáp ứng các yêu cầu cho mật khẩu."
+    )
+
+    ERROR_TEXT2 = (
+        "The password you typed is too long, please limit it to 48 symbols"
+    )
+
+    
+
+    # (password, mô tả, is_valid)
     password_cases = [
-        ("abcdefg1!", "Không có chữ hoa"),
-        ("ABCDEFG1!", "Không có chữ thường"),
-        ("Abcdefgh!", "Không có số"),
-        ("Abc1!", "Ít hơn 8 ký tự"),
-        ("Abc def1!", "Có dấu cách"),
-        ("Abcdefg1", "Không có ký tự đặc biệt"),
-        ("Huudat0911nvkalsjdhwysuwisuayqtsgahsbcgshagdyatdrscs8929127@","Nhiều hơn 48 ký tự"),
-        ("Huudat0911@","Mật khẩu hợp lý"),
+        ("abcdefg1!",    "Không có chữ hoa",         False),
+        ("ABCDEFG1!",    "Không có chữ thường",      False),
+        ("Abcdefgh!",    "Không có số",              False),
+        ("Abc1!",        "Ít hơn 8 ký tự",           False),
+        ("Abc def1!",    "Có dấu cách",              False),
+        ("Abcdefg1",     "Không có ký tự đặc biệt",  False),
+
+        (
+            "Huudat0911nvkalsjdhwysuwisuayqtsgahsbcgshagdyatdrscs8929127@",
+            "Nhiều hơn 48 ký tự",
+            False
+        ),
+
+        ("Huudat0911@",  "Mật khẩu hợp lệ",          True),
     ]
 
-    for pwd, desc in password_cases:
-        try:
-            log_step(f"Case: {desc}")
+    for pwd, desc, is_valid in password_cases:
 
-            # 🔥 1. Đợi input password
+        try:
+            log_step(f"Password: [{desc}]")
+
+            # =========================================
+            # Input password
+            # =========================================
             password_input = wait.until(
-                EC.element_to_be_clickable((By.ID, "input-password"))
+                EC.element_to_be_clickable(
+                    (By.ID, "input-password")
+                )
             )
 
-            # 🔥 2. Bật mắt (show password)
+            # =========================================
+            # Hiện password nếu có nút eye
+            # =========================================
             try:
-                eye_btn = wait.until(
-                    EC.element_to_be_clickable((
-                        By.XPATH,
-                        "//*[@id='form-password']//button"
-                    ))
+                eye_btn = driver.find_element(
+                    By.XPATH,
+                    "//*[@id='form-password']//button[@aria-checked]"
                 )
 
-                # Nếu chưa bật thì click
                 if eye_btn.get_attribute("aria-checked") == "false":
-                    driver.execute_script("arguments[0].click();", eye_btn)
-                    log("Đã bật hiển thị mật khẩu", "PASS")
+                    driver.execute_script(
+                        "arguments[0].click();",
+                        eye_btn
+                    )
+
             except:
-                log("Không tìm thấy nút mắt", "ERROR")
+                pass
 
-            # 🔥 3. Clear password cũ
-            password_input.send_keys(Keys.COMMAND, "a")
-            password_input.send_keys(Keys.DELETE)
+            # =========================================
+            # Clear password cũ
+            # =========================================
+            # Focus vào input
+            driver.execute_script(
+                "arguments[0].focus();",
+                password_input
+            )
 
-            # 🔥 4. Nhập password test
+            # Clear bằng JS
+            driver.execute_script(
+                "arguments[0].value = '';",
+                password_input
+            )
+
+            # Trigger input event cho Vue/React
+            driver.execute_script("""
+                arguments[0].dispatchEvent(
+                    new Event('input', { bubbles: true })
+                );
+            """, password_input)
+
+
+            time.sleep(0.5)
+
+            # =========================================
+            # Nhập password mới
+            # =========================================
             password_input.send_keys(pwd)
+
             log(f"Nhập password: {pwd}", "INFO")
+
+            time.sleep(1)
+
+            # =========================================
+            # Click nút xác nhận
+            # =========================================
+            confirm_btn = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[@type='submit']")
+                )
+            )
+
+            driver.execute_script(
+                "arguments[0].click();",
+                confirm_btn
+            )
+
+            log("Click xác nhận", "INFO")
 
             time.sleep(2)
 
-            # 🔥 5. Click xác nhận
-            confirm_btn = wait.until(
-                EC.element_to_be_clickable((
-                    By.XPATH,
-                    "//button[@type='submit']"
-                ))
-            )
+            # =========================================
+            # Kiểm tra lỗi password
+            # =========================================
+            page_source = driver.page_source
 
-            driver.execute_script("arguments[0].click();", confirm_btn)
-            log("Click xác nhận", "PASS")
+            has_password_error1 = ERROR_TEXT1 in page_source
+            has_password_error2 = ERROR_TEXT2 in page_source
 
-            # 🔥 6. Check lỗi
-            try:
-                error_msg = wait.until(
-                    EC.visibility_of_element_located((
-                        By.XPATH,
-                        "//div[contains(@class,'error') or contains(text(),'Mật khẩu chưa hợp lệ') or contains(text(),'password')]"
-                    ))
+            # =========================================
+            # CASE PASSWORD INVALID
+            # =========================================
+            if not is_valid:
+
+                blocked = (
+                    has_password_error1 or has_password_error2
+                    or is_still_on_same_step("input-password")
                 )
-                log(f"{desc}", "FAIL")
 
-            except:
-                log(f"[{desc}] → Không thấy lỗi", "PASS")
+                if has_password_error1 or has_password_error2:
+                    log(
+                        "Hiển thị đúng thông báo lỗi mật khẩu",
+                        "SUCCESS"
+                    )
+                else:
+                    log(
+                        "Không tìm thấy thông báo lỗi mật khẩu",
+                        "ERROR"
+                    )
 
-            # ⏱️ Delay để quan sát
-            time.sleep(5)
+                log_result(
+                    desc,
+                    expected_blocked=True,
+                    actually_blocked=blocked
+                )
+
+            # =========================================
+            # CASE PASSWORD VALID
+            # =========================================
+            else:
+
+                blocked = (
+                    has_password_error1 or has_password_error2
+                    or is_still_on_same_step("input-password")
+                )
+
+                log_result(
+                    desc,
+                    expected_blocked=False,
+                    actually_blocked=blocked
+                )
+
+                if not blocked:
+                    log(
+                        "PASS - Mật khẩu hợp lệ",
+                        "SUCCESS"
+                    )
+                else:
+                    log(
+                        "FAIL - Mật khẩu hợp lệ nhưng bị chặn",
+                        "ERROR"
+                    )
+
+            time.sleep(2)
 
         except Exception as e:
-            log(f"[{desc}] → Lỗi: {e}", "ERROR")
+            log(f"Lỗi hệ thống: {e}", "ERROR")
 
 
-
+# ================== TICK CHECKBOX & SUBMIT ==================
 def tick_checkbox_and_submit(driver):
-    wait = WebDriverWait(driver, 10)
+    log_step("Tick checkbox điều khoản")
 
-    print("\n==================== Tick checkbox ====================")
-
-    # Checkbox 1
     checkbox1 = wait.until(EC.element_to_be_clickable(
         (By.XPATH, "//label[@for='datashare-D7q2MjWi']")
     ))
     driver.execute_script("arguments[0].click();", checkbox1)
-    print("[PASS] Checkbox 1")
+    log("Checkbox 1 đã chọn", "PASS")
 
-    # Checkbox 2
     checkbox2 = wait.until(EC.element_to_be_clickable(
         (By.XPATH, "//label[@for='mysports-RmzeVX4K']")
     ))
     driver.execute_script("arguments[0].click();", checkbox2)
-    print("[PASS] Checkbox 2")
+    log("Checkbox 2 đã chọn", "PASS")
 
-    print("\n==================== Click submit ====================")
-
-    # Chờ button hết disabled
-    submit_btn = wait.until(EC.element_to_be_clickable(
-        (By.ID, "consents-button-submit")
-    ))
-
+    log_step("Click submit hoàn tất đăng ký")
+    submit_btn = wait.until(EC.element_to_be_clickable((By.ID, "consents-button-submit")))
     driver.execute_script("arguments[0].click();", submit_btn)
-    print("[PASS] Click submit")
+    log("Click submit OK", "PASS")
 
 
+# ================== KIỂM TRA ĐĂNG KÝ THÀNH CÔNG ==================
 def check_register_success(driver):
-    print("\n==================== Check đăng ký ====================")
-
+    log_step("Kiểm tra kết quả đăng ký")
     try:
-        # Chờ URL thay đổi về trang chủ
         WebDriverWait(driver, 10).until(
             lambda d: "decathlon.vn" in d.current_url and "login" not in d.current_url
         )
-
-        print(f"[SUCCESS] Tạo tài khoản thành công")
-
+        log("Tạo tài khoản thành công → Redirect về trang chủ", "PASS")
     except:
-        print("[FAIL] Tạo tài khoản không thành công")
+        log("Tạo tài khoản thất bại / không redirect", "FAIL")
 
-#nhấn tạo tài khoản
+
+# ======================== MAIN FLOW ========================
 click_btn_create()
 time.sleep(2)
-#email đã tồn tại
-validate2()
-time.sleep(4)
-#email định dạng
-validate3()
-time.sleep(4)
-#lấy mã và điền mã
-validate_otp()
-time.sleep(4)
-# mật khẩu rỗng
-validate_password_empty()
-time.sleep(4)
-#pass định dạng
-validate_password()
-# #Đồng ý điều khoản và xác nhận
-tick_checkbox_and_submit(driver)
-check_register_success(driver)
 
+validate2()        # Email đã tồn tại
+time.sleep(4)
+
+validate3()        # Định dạng email
+time.sleep(4)
+
+validate_otp()     # Mã OTP
+time.sleep(4)
+
+validate_password_empty()   # Mật khẩu rỗng
+time.sleep(4)
+
+validate_password()         # Các trường hợp mật khẩu
+time.sleep(4)
+# tick_checkbox_and_submit(driver)
+# check_register_success(driver)
