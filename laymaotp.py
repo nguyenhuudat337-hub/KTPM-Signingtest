@@ -1,72 +1,37 @@
-
 import imaplib
 import email
 import re
-from bs4 import BeautifulSoup
-
+from email.header import decode_header
+# Kết nối tới Gmail (Ví dụ)
 
 def get_otp(mail_name, pass_word):
-
-    # Kết nối Gmail
     mail = imaplib.IMAP4_SSL("imap.gmail.com")
-    mail.login(mail_name, pass_word)
+    mail.login(mail_name, pass_word) # Sử dụng App Password
 
-    # Chọn inbox
     mail.select("inbox")
 
-    # Lấy danh sách email
     status, messages = mail.search(None, "ALL")
     email_ids = messages[0].split()
 
-    # Duyệt từ mail mới nhất -> cũ hơn
-    for email_id in reversed(email_ids):
+    latest_email_id = email_ids[-1]
 
-        status, msg_data = mail.fetch(email_id, "(RFC822)")
-        raw_email = msg_data[0][1]
+    status, msg_data = mail.fetch(latest_email_id, "(RFC822)")
+    raw_email = msg_data[0][1]
+    msg = email.message_from_bytes(raw_email)
 
-        # Chuyển email thành object
-        msg = email.message_from_bytes(raw_email)
+    # Decode subject
+    subject_raw = msg["Subject"]
+    decoded_subject = ""
 
-        body = ""
-
-        # Lấy nội dung mail
-        if msg.is_multipart():
-
-            for part in msg.walk():
-
-                content_type = part.get_content_type()
-
-                try:
-                    payload = part.get_payload(decode=True)
-
-                    if payload:
-
-                        text = payload.decode(errors="ignore")
-
-                        # Lấy cả plain text và html
-                        if content_type in ["text/plain", "text/html"]:
-                            body += text
-
-                except:
-                    pass
-
+    for part, encoding in decode_header(subject_raw):
+        if isinstance(part, bytes):
+            decoded_subject += part.decode(encoding or "utf-8", errors="ignore")
         else:
+            decoded_subject += part
 
-            try:
-                body = msg.get_payload(decode=True).decode(errors="ignore")
-            except:
-                pass
+    # Lấy OTP
+    match = re.search(r"\b\d{6}\b", decoded_subject)
 
-        # Chuyển HTML -> text
-        soup = BeautifulSoup(body, "html.parser")
-        clean_text = soup.get_text()
-
-        # Tìm OTP 6 số
-        match = re.search(r"\b\d{6}\b", clean_text)
-
-        if match:
-            return match.group(0)
-
-    return None
-
-
+    if match:
+        print(match.group())
+    return int(match.group())

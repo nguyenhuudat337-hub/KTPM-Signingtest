@@ -166,7 +166,7 @@ def validate3():
         ("",                                                                                     "Email rỗng",              False),
         ("nguyenhuudat 337@gmail.com",                                                           "Có khoảng trắng",         False),
         ("abcgmail.com",                                                                         "Thiếu @",                 False),
-        ("nguyenhuudat337+6@gmail.com",                                                          "Email hợp lệ",            True),
+        ("nguyenhuudat337+9@gmail.com",                                                          "Email hợp lệ",            True),
     ]
  
     for email, desc, is_valid in test_emails:
