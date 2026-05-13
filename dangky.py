@@ -625,5 +625,5 @@ time.sleep(4)
 
 validate_password()         # Các trường hợp mật khẩu
 time.sleep(4)
-# tick_checkbox_and_submit(driver)
-# check_register_success(driver)
+tick_checkbox_and_submit(driver)
+check_register_success(driver)

@@ -1,10 +1,12 @@
+
 import imaplib
 import email
 import re
-from email.header import decode_header
+from bs4 import BeautifulSoup
 
 
 def get_otp(mail_name, pass_word):
+
     # Kết nối Gmail
     mail = imaplib.IMAP4_SSL("imap.gmail.com")
     mail.login(mail_name, pass_word)
@@ -16,44 +18,55 @@ def get_otp(mail_name, pass_word):
     status, messages = mail.search(None, "ALL")
     email_ids = messages[0].split()
 
-    # Không có email
-    if not email_ids:
-        return None
+    # Duyệt từ mail mới nhất -> cũ hơn
+    for email_id in reversed(email_ids):
 
-    # Lấy email mới nhất
-    latest_email_id = email_ids[-1]
+        status, msg_data = mail.fetch(email_id, "(RFC822)")
+        raw_email = msg_data[0][1]
 
-    status, msg_data = mail.fetch(latest_email_id, "(RFC822)")
-    raw_email = msg_data[0][1]
+        # Chuyển email thành object
+        msg = email.message_from_bytes(raw_email)
 
-    # Chuyển thành object email
-    msg = email.message_from_bytes(raw_email)
+        body = ""
 
-    # Nội dung email
-    body = ""
+        # Lấy nội dung mail
+        if msg.is_multipart():
 
-    # Nếu email có nhiều phần
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
+            for part in msg.walk():
 
-            # Chỉ lấy text, bỏ file đính kèm
-            if content_type == "text/plain" and "attachment" not in content_disposition:
+                content_type = part.get_content_type()
+
                 try:
-                    body = part.get_payload(decode=True).decode()
-                    break
+                    payload = part.get_payload(decode=True)
+
+                    if payload:
+
+                        text = payload.decode(errors="ignore")
+
+                        # Lấy cả plain text và html
+                        if content_type in ["text/plain", "text/html"]:
+                            body += text
+
                 except:
                     pass
-    else:
-        # Email thường
-        body = msg.get_payload(decode=True).decode()
 
+        else:
 
-    # Tìm OTP 6 số
-    match = re.search(r"\b\d{6}\b", body)
+            try:
+                body = msg.get_payload(decode=True).decode(errors="ignore")
+            except:
+                pass
 
-    if match:
-        return int(match.group())
+        # Chuyển HTML -> text
+        soup = BeautifulSoup(body, "html.parser")
+        clean_text = soup.get_text()
+
+        # Tìm OTP 6 số
+        match = re.search(r"\b\d{6}\b", clean_text)
+
+        if match:
+            return match.group(0)
 
     return None
+
+
